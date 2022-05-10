@@ -1,6 +1,9 @@
 package proxy
 
 import (
+	"fmt"
+
+	protov1 "github.com/golang/protobuf/proto"
 	"google.golang.org/grpc/encoding"
 	eproto "google.golang.org/grpc/encoding/proto"
 	"google.golang.org/protobuf/proto"
@@ -51,13 +54,26 @@ func (c *rawCodec) Unmarshal(data []byte, v interface{}) error {
 type protoCodec struct{}
 
 func (c protoCodec) Name() string {
-	return ""
+	return eproto.Name
 }
-
 func (protoCodec) Marshal(v interface{}) ([]byte, error) {
-	return proto.Marshal(v.(proto.Message))
+	if _, ok := v.(protov1.Message); ok {
+		v = protov1.MessageV2(v)
+	}
+	vv, ok := v.(proto.Message)
+	if !ok {
+		return nil, fmt.Errorf("failed to marshal, message is %T, want proto.Message", v)
+	}
+	return proto.Marshal(vv)
 }
 
 func (protoCodec) Unmarshal(data []byte, v interface{}) error {
-	return proto.Unmarshal(data, v.(proto.Message))
+	if _, ok := v.(protov1.Message); ok {
+		v = protov1.MessageV2(v)
+	}
+	vv, ok := v.(proto.Message)
+	if !ok {
+		return fmt.Errorf("failed to unmarshal, message is %T, want proto.Message", v)
+	}
+	return proto.Unmarshal(data, vv)
 }
