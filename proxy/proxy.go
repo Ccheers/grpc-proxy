@@ -18,10 +18,10 @@ func NewProxy(dst *grpc.ClientConn, opts ...grpc.ServerOption) *grpc.Server {
 	return grpc.NewServer(opts...)
 }
 
-func GrpcProxyOptions(sd StreamDirector) []grpc.ServerOption {
+func GrpcProxyOptions(sd StreamDirector, opts ...Option) []grpc.ServerOption {
 	encoding.RegisterCodec(Codec())
 	return []grpc.ServerOption{
-		grpc.UnknownServiceHandler(TransparentHandler(sd)),
+		grpc.UnknownServiceHandler(TransparentHandler(sd, opts...)),
 	}
 }
 

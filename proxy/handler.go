@@ -5,7 +5,9 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"log"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -22,7 +24,7 @@ var (
 // RegisterService sets up a proxy handler for a particular gRPC service and method.
 // The behaviour is the same as if you were registering a handler method, e.g. from a generated pb.go file.
 func RegisterService(server *grpc.Server, director StreamDirector, serviceName string, methodNames ...string) {
-	streamer := &handler{director}
+	streamer := newHandler(director)
 	fakeDesc := &grpc.ServiceDesc{
 		ServiceName: serviceName,
 		HandlerType: (*interface{})(nil),
@@ -42,19 +44,51 @@ func RegisterService(server *grpc.Server, director StreamDirector, serviceName s
 // TransparentHandler returns a handler that attempts to proxy all requests that are not registered in the server.
 // The indented use here is as a transparent proxy, where the server doesn't know about the services implemented by the
 // backends. It should be used as a `grpc.UnknownServiceHandler`.
-func TransparentHandler(director StreamDirector) grpc.StreamHandler {
-	streamer := &handler{director: director}
+func TransparentHandler(director StreamDirector, opts ...Option) grpc.StreamHandler {
+	streamer := newHandler(director, opts...)
 	return streamer.handler
 }
 
+type Option func(*handler)
+
+func WithPanicHandler(f PanicHandler) Option {
+	return func(h *handler) {
+		h.handlePanic = f
+	}
+}
+
+type PanicHandler func(err error, serverStream grpc.ServerStream)
+
 type handler struct {
-	director StreamDirector
+	director    StreamDirector
+	handlePanic PanicHandler
+}
+
+func newHandler(director StreamDirector, opts ...Option) *handler {
+	h := &handler{
+		director: director,
+		handlePanic: func(err error, serverStream grpc.ServerStream) {
+			// little bit of gRPC internals never hurt anyone
+			fullMethodName, _ := grpc.MethodFromServerStream(serverStream)
+			log.Printf("Panic: %v, fullMethodName=%s\n", err, fullMethodName)
+		},
+	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // handler is where the real magic of proxying happens.
 // It is invoked like any gRPC server stream and uses the anypb.Any type server
 // to proxy calls between the input and output streams.
 func (s *handler) handler(srv interface{}, serverStream grpc.ServerStream) error {
+	defer func() {
+		if err := recover(); err != nil {
+			s.handlePanic(fmt.Errorf("%v", err), serverStream)
+		}
+	}()
+
 	// little bit of gRPC internals never hurt anyone
 	fullMethodName, ok := grpc.MethodFromServerStream(serverStream)
 	if !ok {
